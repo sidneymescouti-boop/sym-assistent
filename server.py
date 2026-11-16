@@ -28,7 +28,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS device(id INTEGER PRIMARY KEY, data TEXT);
             CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY,data TEXT);
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER,action TEXT,revision INTEGER);''')
-            c.execute('INSERT OR IGNORE INTO config VALUES (1,1,?)', (json.dumps({'catalogue':'https://linktr.ee/sidneymescouti','knowledge':'SYM CONCEPT: loja online de streetwear de Curitiba. Sidney confirma preços, estoque, medidas e frete.','paused':True}),))
+            c.execute('INSERT OR IGNORE INTO config VALUES (1,1,?)', (json.dumps({'catalogue':'','knowledge':'','paused':True}),))
         os.chmod(path, 0o600)
     def connect(self):
         c=sqlite3.connect(self.path, timeout=10)
@@ -120,7 +120,7 @@ class Provider(OAuthAuthorizationServerProvider):
         self.clean()
         if len(self.access)>1000:raise TokenError('invalid_grant','Limite de sessões atingido')
         a,r=secrets.token_urlsafe(32),secrets.token_urlsafe(32)
-        self.access[digest(a)]=AccessToken(token=a,client_id=client_id,scopes=scopes,expires_at=int(time.time())+3600,resource=resource,subject='sidney')
+        self.access[digest(a)]=AccessToken(token=a,client_id=client_id,scopes=scopes,expires_at=int(time.time())+3600,resource=resource,subject='owner')
         self.refresh[digest(r)]=RefreshToken(token=r,client_id=client_id,scopes=scopes,expires_at=int(time.time())+86400,subject=resource)
         return OAuthToken(access_token=a,refresh_token=r,expires_in=3600,scope=' '.join(scopes))
     async def exchange_authorization_code(self, client, authorization_code):
@@ -157,7 +157,7 @@ def create_app(path=None, base=None, owner=None, device_token=None, callbacks=No
     callbacks=callbacks if callbacks is not None else [x.strip() for x in os.environ.get('SYM_OAUTH_REDIRECTS','').split(',') if x.strip()]
     provider=Provider(db,base,callbacks)
     host=urlparse(base).netloc
-    mcp=FastMCP('SYM CONCEPT • Gerenciamento',stateless_http=True,json_response=True,
+    mcp=FastMCP('SYM • Gerenciamento',stateless_http=True,json_response=True,
         auth_server_provider=provider,
         auth=AuthSettings(issuer_url=base,resource_server_url=base+'/mcp',required_scopes=['sym:manage'],client_registration_options=ClientRegistrationOptions(enabled=True,valid_scopes=['sym:manage'],default_scopes=['sym:manage']),revocation_options=RevocationOptions(enabled=True)),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=True,allowed_hosts=[host],allowed_origins=[base]))
@@ -209,7 +209,7 @@ def create_app(path=None, base=None, owner=None, device_token=None, callbacks=No
     def auth(req,secret):
         if not secrets.compare_digest(req.headers.get('authorization',''),'Bearer '+secret):raise HTTPException(401,'Acesso não autorizado')
     @app.get('/health')
-    def health():return {'service':'sym-bridge','version':'0.2.0'}
+    def health():return {'service':'sym-bridge','version':'0.3.0'}
     @app.get('/panel')
     def panel():return HTMLResponse((Path(__file__).parent/'panel.html').read_text())
     @app.get('/panel.js')
@@ -234,7 +234,7 @@ def create_app(path=None, base=None, owner=None, device_token=None, callbacks=No
         if not pending:raise HTTPException(400,'Pedido expirado')
         csrf=secrets.token_urlsafe(32);pending['csrf']=csrf
         callback=html.escape(str(pending['params'].redirect_uri)); name=html.escape(pending['client'].client_name or 'Cliente MCP')
-        response=HTMLResponse(f'''<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/panel.css"><title>Autorizar SYM</title><main><h1>Conectar SYM CONCEPT</h1><p>Cliente: {name}</p><p>Permite consultar estado e alterar conhecimento, catálogo e pausa. Não permite ler conversas, ativar IA ou liberar contatos.</p><p>Retorno: {callback}</p><form method="post" action="/consent"><input type="hidden" name="ticket" value="{html.escape(ticket)}"><input type="hidden" name="csrf" value="{csrf}"><label>Segredo do proprietário<input name="owner" type="password" required autocomplete="off"></label><button>Autorizar acesso</button></form></main></html>''')
+        response=HTMLResponse(f'''<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/panel.css"><title>Autorizar SYM</title><main><h1>Conectar SYM</h1><p>Cliente: {name}</p><p>Permite consultar estado e alterar conhecimento, catálogo e pausa. Não permite ler conversas, ativar IA ou liberar contatos.</p><p>Retorno: {callback}</p><form method="post" action="/consent"><input type="hidden" name="ticket" value="{html.escape(ticket)}"><input type="hidden" name="csrf" value="{csrf}"><label>Segredo do proprietário<input name="owner" type="password" required autocomplete="off"></label><button>Autorizar acesso</button></form></main></html>''')
         response.set_cookie('sym_consent',csrf,max_age=300,httponly=True,secure=base.startswith('https:'),samesite='lax')
         return response
     @app.post('/consent')
@@ -246,13 +246,15 @@ def create_app(path=None, base=None, owner=None, device_token=None, callbacks=No
         if not secrets.compare_digest(str(form.get('owner','')),owner):raise HTTPException(403,'Segredo inválido')
         provider.pending.pop(ticket,None);params=pending['params'];client=pending['client']
         code=secrets.token_urlsafe(32)
-        provider.codes[digest(code)]=AuthorizationCode(code=code,client_id=client.client_id,scopes=params.scopes or ['sym:manage'],expires_at=time.time()+120,code_challenge=params.code_challenge,redirect_uri=params.redirect_uri,redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,resource=params.resource,subject='sidney')
+        provider.codes[digest(code)]=AuthorizationCode(code=code,client_id=client.client_id,scopes=params.scopes or ['sym:manage'],expires_at=time.time()+120,code_challenge=params.code_challenge,redirect_uri=params.redirect_uri,redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,resource=params.resource,subject='owner')
         # Do not put credentials in redirects. Only short-lived code and original OAuth state.
         target=str(params.redirect_uri);query={'code':code}
         if params.state is not None:query['state']=params.state
         from fastapi.responses import RedirectResponse
         response=RedirectResponse(target+('&' if '?' in target else '?')+urlencode(query),status_code=303)
         response.delete_cookie('sym_consent');return response
+    from ai_gateway import attach_ai
+    attach_ai(app, db, owner)
     # OAuth routes and /mcp are owned by the official MCP SDK.
     app.mount('/',mcp_app)
     return app
